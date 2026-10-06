@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Portal Karyawan SinoVisa</title>
+<style>
+:root{--b:#1e4fa3;--bg:#f4f6fa;--c:#fff;--t:#1f2937;--bd:#e5e7eb;--in:#cbd5e1;--soft:#eef2f9;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--b:#4f83d9;--bg:#0f172a;--c:#1e293b;--t:#e5e7eb;--bd:#334155;--in:#475569;--soft:#243049}}
+:root[data-theme="dark"]{--b:#4f83d9;--bg:#0f172a;--c:#1e293b;--t:#e5e7eb;--bd:#334155;--in:#475569;--soft:#243049}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,Arial,sans-serif;background:var(--bg);color:var(--t)}
+.card{background:var(--c);border-radius:10px;padding:18px;box-shadow:0 1px 4px #0001;margin-bottom:16px}
+input,select,textarea{font:inherit;background:var(--c);color:var(--t);padding:9px 10px;border:1px solid var(--in);border-radius:6px;width:100%;margin:4px 0}
+button{font:inherit;background:var(--b);color:#fff;border:0;border-radius:6px;cursor:pointer;padding:9px 16px;margin:4px 0}
+button.s{background:#64748b}
+button.d{background:#c0392b}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:8px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top}
+.wrap{overflow-x:auto}
+header{background:var(--b);color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+header button{background:#fff3;margin:0}
+nav{display:flex;gap:6px;flex-wrap:wrap;padding:10px 18px;background:var(--c);border-bottom:1px solid var(--bd)}
+nav button{background:var(--soft);color:var(--b);margin:0}
+nav button.on{background:var(--b);color:#fff}
+main{max-width:980px;margin:18px auto;padding:0 14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.menu{cursor:pointer;border:1px solid var(--bd);margin:0}
+.menu:hover{border-color:var(--b)}
+#login{max-width:440px;margin:30px auto;padding:0 14px}
+.chk{display:inline-block;margin-right:10px;font-size:13px}
+.chk input{width:auto;margin:0 4px 0 0}
+.ok{color:#15803d;font-weight:600}
+#toast{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:8px;display:none;z-index:9}
+@media print{body *{visibility:hidden}#inv,#inv *{visibility:visible}#inv{position:absolute;left:0;top:0;width:100%;box-shadow:none;background:#fff;color:#000}}
+</style>
+</head>
+<body>
+<section id="login">
+  <div class="card">
+    <h2 style="color:var(--b);margin-top:0">Portal Karyawan SinoVisa</h2>
+    <form onsubmit="doLogin(event)">
+      <label>Username<input id="lu" required autocomplete="username"></label>
+      <label>Password<input id="lp" type="password" required autocomplete="current-password"></label>
+      <button style="width:100%">Masuk</button>
+    </form>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Cek Status Visa (Pelanggan)</h3>
+    <input id="kode" placeholder="Masukkan kode, contoh: SV-123456">
+    <button class="s" onclick="cekStatus()">Cek Status</button>
+    <div id="hasil"></div>
+  </div>
+</section>
+
+<div id="app" hidden>
+  <header><b>Portal Karyawan SinoVisa</b><span><span id="who"></span> <button onclick="logout()">Keluar</button></span></header>
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+<div id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const KEY='sinovisa_db';
+const STATUS=['Dokumen Diterima','Verifikasi Dokumen','Diajukan ke Kedutaan','Visa Disetujui','Paspor Dikirim / Selesai'];
+const DESC={penjualan:'Catat penjualan, komisi dihitung otomatis tiap bulan',tracking:'Update progres proses visa pelanggan',invoice:'Cetak invoice pelanggan'};
+let db=null;
+try{db=JSON.parse(localStorage.getItem(KEY)||'null')}catch(e){}
+db=db||{rate:5,
+  users:[{u:'admin',p:'admin123',role:'admin',menus:[]},{u:'budi',p:'budi123',role:'staff',menus:['penjualan','tracking','invoice']}],
+  menus:[{id:'penjualan',n:'Input Penjualan'},{id:'tracking',n:'Tracking Visa'},{id:'invoice',n:'Invoice'}],
+  sales:[],visas:[]};
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){}};
+const msg=t=>{const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(msg.t);msg.t=setTimeout(()=>e.style.display='none',2500)};
+let pend='';
+const conf=(k,fn)=>{if(pend===k){pend='';fn()}else{pend=k;msg('Klik sekali lagi untuk konfirmasi.')}};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const rp=n=>'Rp '+Number(n).toLocaleString('id-ID');
+let me=null,cur='home',invSel='';
+const isAdmin=()=>me.role==='admin';
+const invId=s=>s.inv||'INV-'+String(s.id).slice(-8);
+function nextInv(tgl){
+  const pre='INV-'+(tgl||'').slice(0,7).replace('-','')+'-';
+  let n=db.sales.filter(s=>s.inv&&s.inv.startsWith(pre)).length+1;
+  while(db.sales.some(s=>s.inv===pre+String(n).padStart(4,'0')))n++;
+  return pre+String(n).padStart(4,'0');
+}
+const allowed=()=>db.menus.filter(m=>isAdmin()||me.menus.includes(m.id));
+
+function doLogin(e){
+  e.preventDefault();
+  const u=db.users.find(x=>x.u===$('#lu').value.trim()&&x.p===$('#lp').value);
+  if(!u)return msg('Username atau password salah.');
+  me=u;cur='home';$('#lp').value='';render();
+}
+function logout(){me=null;render()}
+function go(id){cur=id;render()}
+
+function render(){
+  if(me){me=db.users.find(x=>x.u===me.u)||null}
+  $('#login').hidden=!!me;$('#app').hidden=!me;
+  if(!me)return;
+  $('#who').textContent=me.u+' ('+(isAdmin()?'Admin':'Karyawan')+')';
+  const ok=cur==='home'||(cur==='admin'&&isAdmin())||allowed().some(m=>m.id===cur);
+  if(!ok)cur='home';
+  const items=[['home','Beranda'],...allowed().map(m=>[m.id,m.n])];
+  if(isAdmin())items.push(['admin','Panel Admin']);
+  $('#nav').innerHTML=items.map(([id,n])=>`<button class="${id===cur?'on':''}" onclick="go('${id}')">${esc(n)}</button>`).join('');
+  const f={home,penjualan,tracking,invoice,admin}[cur]||custom;
+  $('#main').innerHTML=f();
+}
+
+/* ===== CORE CAPABILITIES (Beranda) ===== */
+function home(){
+  let h=`<div class="card"><h2 style="margin-top:0">Core Capabilities</h2><p>Selamat datang, <b>${esc(me.u)}</b>. Pilih menu yang tersedia:</p><div class="grid">`+
+    allowed().map(m=>`<div class="card menu" onclick="go('${m.id}')"><b>${esc(m.n)}</b><br><small>${esc(m.d||DESC[m.id]||'')}</small></div>`).join('')+
+    (allowed().length?'':'<p>Belum ada menu yang dapat Anda akses. Hubungi admin.</p>')+`</div></div>`;
+  if(isAdmin()){
+    h+=`<div class="card"><h3 style="margin-top:0">Tambah Menu Baru (Khusus Admin)</h3>
+      <input id="mn" placeholder="Nama menu"><textarea id="md" rows="2" placeholder="Deskripsi / isi halaman menu"></textarea>
+      <button onclick="addMenu()">Tambah Menu</button>
+      <p><small>Menu baru bisa diberikan ke karyawan melalui Panel Admin.</small></p>`;
+    const cs=db.menus.filter(m=>m.id[0]==='m');
+    h+=cs.map(m=>`<div>${esc(m.n)} <button class="d" onclick="delMenu('${m.id}')">Hapus</button></div>`).join('')+`</div>`;
+  }
+  return h;
+}
+function addMenu(){
+  const n=$('#mn').value.trim();if(!n)return msg('Nama menu wajib diisi.');
+  db.menus.push({id:'m'+Date.now(),n,d:$('#md').value.trim()});save();render();
+}
+function delMenu(id){
+  conf('m'+id,()=>{db.menus=db.menus.filter(m=>m.id!==id);db.users.forEach(u=>u.menus=u.menus.filter(x=>x!==id));save();render()});
+}
+function custom(){
+  const m=db.menus.find(x=>x.id===cur);
+  return m?`<div class="card"><h2 style="margin-top:0">${esc(m.n)}</h2><p>${esc(m.d||'')}</p></div>`:'';
+}
+
+/* ===== INPUT PENJUALAN & KOMISI ===== */
+function penjualan(){
+  const mine=isAdmin()?db.sales:db.sales.filter(s=>s.u===me.u);
+  const sum={};
+  mine.forEach(s=>{const k=s.tgl.slice(0,7)+'|'+s.u;sum[k]=(sum[k]||0)+s.nilai});
+  const today=new Date().toISOString().slice(0,10);
+  return `<div class="card"><h2 style="margin-top:0">Input Penjualan</h2>
+    <div class="row"><label><small>Invoice ID (otomatis)</small><input id="si" readonly value="${nextInv(today)}"></label><input id="st" type="date" value="${today}" onchange="$('#si').value=nextInv(this.value)"><input id="sn" placeholder="Nama pelanggan"><input id="sl" placeholder="Layanan (mis. Visa Turis China)"><input id="sv" type="number" min="0" placeholder="Nilai penjualan (Rp)"></div>
+    <button onclick="addSale()">Simpan Penjualan</button></div>
+  <div class="card"><h3 style="margin-top:0">Rekap Komisi Bulanan (${db.rate}%)</h3><div class="wrap"><table>
+    <tr><th>Bulan</th><th>Karyawan</th><th>Total Penjualan</th><th>Komisi</th></tr>
+    ${Object.keys(sum).sort().reverse().map(k=>{const[b,u]=k.split('|');return `<tr><td>${esc(b)}</td><td>${esc(u)}</td><td>${rp(sum[k])}</td><td class="ok">${rp(sum[k]*db.rate/100)}</td></tr>`}).join('')||'<tr><td colspan="4">Belum ada data.</td></tr>'}
+    </table></div></div>
+  <div class="card"><h3 style="margin-top:0">Riwayat Penjualan</h3><div class="wrap"><table>
+    <tr><th>Invoice ID</th><th>Tanggal</th><th>Karyawan</th><th>Pelanggan</th><th>Layanan</th><th>Nilai</th></tr>
+    ${mine.slice().reverse().map(s=>`<tr><td><b>${esc(invId(s))}</b></td><td>${esc(s.tgl)}</td><td>${esc(s.u)}</td><td>${esc(s.nama)}</td><td>${esc(s.layanan)}</td><td>${rp(s.nilai)}</td></tr>`).join('')||'<tr><td colspan="6">Belum ada data.</td></tr>'}
+    </table></div></div>`;
+}
+function addSale(){
+  const tgl=$('#st').value,nama=$('#sn').value.trim(),layanan=$('#sl').value.trim(),nilai=+$('#sv').value;
+  if(!tgl||!nama||!layanan||nilai<=0)return msg('Lengkapi semua data penjualan.');
+  db.sales.push({id:Date.now(),inv:nextInv(tgl),u:me.u,tgl,nama,layanan,nilai});save();render();
+}
+
+/* ===== TRACKING VISA ===== */
+const now=()=>new Date().toLocaleString('id-ID');
+const hist=v=>v.hist||[{s:v.status,t:v.upd}];
+const histHtml=v=>'<ol style="margin:4px 0;padding-left:18px;font-size:13px">'+hist(v).map(h=>`<li>${esc(h.s)}<br><small>${esc(h.t)}</small></li>`).join('')+'</ol>';
+function tracking(){
+  return `<div class="card"><h2 style="margin-top:0">Tambah Proses Visa</h2>
+    <div class="row"><input id="vn" placeholder="Nama pelanggan"><input id="vj" placeholder="Jenis visa"></div>
+    <button onclick="addVisa()">Buat Kode Tracking</button></div>
+  <div class="card"><h3 style="margin-top:0">Daftar Proses Visa</h3><div class="wrap"><table>
+    <tr><th>Kode</th><th>Pelanggan</th><th>Jenis</th><th>Status Saat Ini</th><th>Riwayat Status</th></tr>
+    ${db.visas.slice().reverse().map(v=>`<tr><td><b>${v.kode}</b></td><td>${esc(v.nama)}</td><td>${esc(v.jenis)}</td>
+      <td><select id="ss-${v.kode}">${STATUS.map(s=>`<option ${s===v.status?'selected':''}>${s}</option>`).join('')}</select><br><button onclick="saveStatus('${v.kode}')">Simpan</button></td>
+      <td>${histHtml(v)}</td></tr>`).join('')||'<tr><td colspan="5">Belum ada data.</td></tr>'}
+    </table></div><p><small>Pilih status baru, lalu klik Simpan. Perubahan baru berlaku dan tercatat (tanggal & jam) setelah Simpan diklik. Pelanggan dapat mengecek status memakai kode di halaman login.</small></p></div>`;
+}
+function addVisa(){
+  const nama=$('#vn').value.trim(),jenis=$('#vj').value.trim();
+  if(!nama||!jenis)return msg('Nama dan jenis visa wajib diisi.');
+  db.visas.push({kode:'SV-'+Math.floor(100000+Math.random()*900000),nama,jenis,status:STATUS[0],upd:now(),hist:[{s:STATUS[0],t:now()}]});save();render();
+}
+function saveStatus(k){
+  const s=document.getElementById('ss-'+k).value,v=db.visas.find(x=>x.kode===k);
+  if(v.status===s)return msg('Status belum diubah.');
+  setStatus(k,s);msg('Status berhasil disimpan.');
+}
+function setStatus(k,s){
+  const v=db.visas.find(x=>x.kode===k);if(v.status===s)return;v.hist=hist(v).slice();v.hist.push({s,t:now()});v.status=s;v.upd=now();save();render();
+}
+function cekStatus(){
+  const v=db.visas.find(x=>x.kode.toLowerCase()===$('#kode').value.trim().toLowerCase());
+  $('#hasil').innerHTML=v?`<p><b>${esc(v.nama)}</b> - ${esc(v.jenis)}<br>Status: <span class="ok">${v.status}</span><br><small>Diperbarui: ${esc(v.upd)}</small></p><b>Riwayat:</b>${histHtml(v)}`:'<p>Kode tidak ditemukan.</p>';
+}
+
+/* ===== INVOICE ===== */
+function invoice(){
+  const mine=isAdmin()?db.sales:db.sales.filter(s=>s.u===me.u);
+  const s=mine.find(x=>String(x.id)===invSel);
+  return `<div class="card"><h2 style="margin-top:0">Cetak Invoice</h2>
+    <select onchange="invSel=this.value;render()"><option value="">- Pilih penjualan -</option>
+    ${mine.map(x=>`<option value="${x.id}" ${String(x.id)===invSel?'selected':''}>${esc(invId(x))} - ${esc(x.nama)} - ${rp(x.nilai)}</option>`).join('')}</select>
+    ${s?'<button onclick="window.print()">Cetak / Simpan PDF</button>':''}</div>
+  ${s?`<div class="card" id="inv"><h2 style="color:var(--b);margin-top:0">INVOICE</h2><b>SinoVisa</b><br>No: ${esc(invId(s))}<br>Tanggal: ${esc(s.tgl)}<hr>
+    <p>Kepada: <b>${esc(s.nama)}</b></p>
+    <table><tr><th>Layanan</th><th style="text-align:right">Jumlah</th></tr><tr><td>${esc(s.layanan)}</td><td style="text-align:right">${rp(s.nilai)}</td></tr>
+    <tr><td><b>Total</b></td><td style="text-align:right"><b>${rp(s.nilai)}</b></td></tr></table>
+    <p><small>Terima kasih telah menggunakan layanan SinoVisa. Petugas: ${esc(s.u)}</small></p></div>`:''}`;
+}
+
+/* ===== PANEL ADMIN ===== */
+function admin(){
+  return `<div class="card"><h2 style="margin-top:0">Pengaturan Komisi</h2>
+    <label>Persentase komisi (%)<input type="number" min="0" max="100" value="${db.rate}" onchange="db.rate=+this.value;save();msg('Tersimpan.')"></label></div>
+  <div class="card"><h3 style="margin-top:0">Tambah Karyawan</h3>
+    <div class="row"><input id="nu" placeholder="Username"><input id="np" placeholder="Password"><select id="nr"><option value="staff">Karyawan</option><option value="admin">Admin</option></select></div>
+    <button onclick="addUser()">Tambah Pengguna</button></div>
+  <div class="card"><h3 style="margin-top:0">Kelola Pengguna & Hak Akses Menu</h3><div class="wrap"><table>
+    <tr><th>Pengguna</th><th>Akses Menu</th><th>Aksi</th></tr>
+    ${db.users.map(u=>`<tr><td>${esc(u.u)}<br><small>${u.role==='admin'?'Admin':'Karyawan'}</small></td>
+      <td>${u.role==='admin'?'Semua menu':db.menus.map(m=>`<label class="chk"><input type="checkbox" ${u.menus.includes(m.id)?'checked':''} onchange="akses('${u.u}','${m.id}',this.checked)">${esc(m.n)}</label>`).join('')}</td>
+      <td><input id="pw-${u.u}" placeholder="Password baru" style="width:140px"><br><button class="s" onclick="resetPw('${u.u}')">Ganti Password</button>${u.u===me.u?'':` <button class="d" onclick="delUser('${u.u}')">Hapus</button>`}</td></tr>`).join('')}
+    </table></div></div>`;
+}
+function addUser(){
+  const u=$('#nu').value.trim(),p=$('#np').value;
+  if(!/^[\w.-]+$/.test(u)||p.length<4)return msg('Username (huruf/angka) dan password (min. 4 karakter) wajib valid.');
+  if(db.users.some(x=>x.u===u))return msg('Username sudah dipakai.');
+  db.users.push({u,p,role:$('#nr').value,menus:[]});save();render();
+}
+function akses(u,id,on){
+  const x=db.users.find(a=>a.u===u);
+  x.menus=on?[...new Set([...x.menus,id])]:x.menus.filter(m=>m!==id);save();
+}
+function resetPw(u){
+  const p=document.getElementById('pw-'+u).value;
+  if(p.length<4)return msg('Password baru minimal 4 karakter.');
+  db.users.find(x=>x.u===u).p=p;save();render();msg('Password diganti.');
+}
+function delUser(u){
+  conf('u'+u,()=>{db.users=db.users.filter(x=>x.u!==u);save();render()});
+}
+render();
+</script>
+</body>
+</html>
